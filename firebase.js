@@ -1,12 +1,10 @@
 /* =========================================================
    firebase.js – Firebase setup, Auth, and Firestore helpers
-   
-   ⚠️  REPLACE the firebaseConfig object below with YOUR
-       project's config from the Firebase Console.
-       See README.md for step-by-step instructions.
+   Project: anime67-2a3b7
    ========================================================= */
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAnalytics }  from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js';
 import {
   getAuth,
   createUserWithEmailAndPassword,
@@ -30,29 +28,32 @@ import {
   serverTimestamp
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
-// ── YOUR FIREBASE CONFIG ──────────────────────────────────
-// Replace this entire object with the one from Firebase Console
-// (Project Settings → Your apps → SDK setup → Config)
+// ── Your Firebase Config ──────────────────────────────────
 const firebaseConfig = {
-  apiKey:            "PASTE_YOUR_API_KEY_HERE",
-  authDomain:        "PASTE_YOUR_AUTH_DOMAIN_HERE",
-  projectId:         "PASTE_YOUR_PROJECT_ID_HERE",
-  storageBucket:     "PASTE_YOUR_STORAGE_BUCKET_HERE",
-  messagingSenderId: "PASTE_YOUR_MESSAGING_SENDER_ID_HERE",
-  appId:             "PASTE_YOUR_APP_ID_HERE"
+  apiKey:            "AIzaSyAmfpWAmmbMRNbkmo0tpUBNaHa2aPPDTSY",
+  authDomain:        "anime67-2a3b7.firebaseapp.com",
+  databaseURL:       "https://anime67-2a3b7-default-rtdb.firebaseio.com",
+  projectId:         "anime67-2a3b7",
+  storageBucket:     "anime67-2a3b7.firebasestorage.app",
+  messagingSenderId: "541162994426",
+  appId:             "1:541162994426:web:135a4540fc2a08770fe743",
+  measurementId:     "G-SQKTG2ZRD2"
 };
-// ─────────────────────────────────────────────────────────
 
-const app  = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db   = getFirestore(app);
+// ── Initialize ────────────────────────────────────────────
+const app       = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
+const auth      = getAuth(app);
+const db        = getFirestore(app);
 
-// ── Auth helpers ──────────────────────────────────────────
+// ── Auth Helpers ──────────────────────────────────────────
 
-/** Returns the current signed-in user, or null */
-function currentUser() { return auth.currentUser; }
+/** Returns the currently signed-in user, or null */
+function currentUser() {
+  return auth.currentUser;
+}
 
-/** Register with email + password */
+/** Register a new user with email + password */
 async function register(email, password) {
   return createUserWithEmailAndPassword(auth, email, password);
 }
@@ -68,31 +69,35 @@ async function loginWithGoogle() {
   return signInWithPopup(auth, provider);
 }
 
-/** Sign out */
-async function logout() { return signOut(auth); }
+/** Sign out the current user */
+async function logout() {
+  return signOut(auth);
+}
 
 /**
- * Subscribe to auth state changes
+ * Listen for auth state changes (signed in / signed out)
  * @param {function} callback – receives user object or null
  */
-function onAuthChange(callback) { onAuthStateChanged(auth, callback); }
+function onAuthChange(callback) {
+  onAuthStateChanged(auth, callback);
+}
 
-// ── Firestore path helpers ────────────────────────────────
-// Data is stored per-user: users/{uid}/collection/docId
+// ── Firestore Path Helpers ────────────────────────────────
+// All user data lives under: users/{uid}/subcollection/{docId}
 
-function userRef(uid)           { return doc(db, 'users', uid); }
-function historyRef(uid, id)    { return doc(db, 'users', uid, 'history', String(id)); }
-function favoritesRef(uid, id)  { return doc(db, 'users', uid, 'favorites', String(id)); }
-function watchlistRef(uid, id)  { return doc(db, 'users', uid, 'watchlist', String(id)); }
-function historyCol(uid)        { return collection(db, 'users', uid, 'history'); }
-function favoritesCol(uid)      { return collection(db, 'users', uid, 'favorites'); }
-function watchlistCol(uid)      { return collection(db, 'users', uid, 'watchlist'); }
+function historyRef(uid, animeId)   { return doc(db, 'users', uid, 'history',   String(animeId)); }
+function favoritesRef(uid, animeId) { return doc(db, 'users', uid, 'favorites', String(animeId)); }
+function watchlistRef(uid, animeId) { return doc(db, 'users', uid, 'watchlist', String(animeId)); }
+function historyCol(uid)            { return collection(db, 'users', uid, 'history'); }
+function favoritesCol(uid)          { return collection(db, 'users', uid, 'favorites'); }
+function watchlistCol(uid)          { return collection(db, 'users', uid, 'watchlist'); }
 
 // ── Watch Progress ────────────────────────────────────────
 
 /**
- * Save watch progress for an anime.
- * Structure: { animeId, title, image, episode, currentTime, duration, updatedAt }
+ * Save watch progress for an anime to Firestore.
+ * Called automatically every 5 seconds while video plays.
+ * @param {{ animeId, title, image, episode, currentTime, duration }} data
  */
 async function saveProgress(data) {
   const uid = currentUser()?.uid;
@@ -104,7 +109,8 @@ async function saveProgress(data) {
 }
 
 /**
- * Get saved progress for a single anime
+ * Get the saved watch progress for a single anime.
+ * Used on the watch page to resume playback.
  * @param {string|number} animeId
  * @returns {object|null}
  */
@@ -116,34 +122,40 @@ async function getProgress(animeId) {
 }
 
 /**
- * Get last 30 watch history entries, sorted by most recent
+ * Get the last 30 watched anime, sorted by most recently watched.
+ * Used on the homepage for the "Continue Watching" section.
  * @returns {Array}
  */
 async function getWatchHistory() {
   const uid = currentUser()?.uid;
   if (!uid) return [];
-  const q = query(historyCol(uid), orderBy('updatedAt', 'desc'), limit(30));
+  const q    = query(historyCol(uid), orderBy('updatedAt', 'desc'), limit(30));
   const snap = await getDocs(q);
   return snap.docs.map(d => d.data());
 }
 
 // ── Favorites ─────────────────────────────────────────────
 
+/** Add an anime to the user's favorites */
 async function addFavorite(anime) {
   const uid = currentUser()?.uid;
   if (!uid) return;
   await setDoc(favoritesRef(uid, anime.id), {
-    id: anime.id, title: anime.title, image: anime.image,
+    id:      anime.id,
+    title:   anime.title,
+    image:   anime.image,
     addedAt: serverTimestamp()
   });
 }
 
+/** Remove an anime from the user's favorites */
 async function removeFavorite(animeId) {
   const uid = currentUser()?.uid;
   if (!uid) return;
   await deleteDoc(favoritesRef(uid, animeId));
 }
 
+/** Check if an anime is in the user's favorites */
 async function isFavorite(animeId) {
   const uid = currentUser()?.uid;
   if (!uid) return false;
@@ -151,6 +163,7 @@ async function isFavorite(animeId) {
   return snap.exists();
 }
 
+/** Get all favorited anime, sorted by most recently added */
 async function getFavorites() {
   const uid = currentUser()?.uid;
   if (!uid) return [];
@@ -160,21 +173,26 @@ async function getFavorites() {
 
 // ── Watchlist ─────────────────────────────────────────────
 
+/** Add an anime to the user's watchlist */
 async function addToWatchlist(anime) {
   const uid = currentUser()?.uid;
   if (!uid) return;
   await setDoc(watchlistRef(uid, anime.id), {
-    id: anime.id, title: anime.title, image: anime.image,
+    id:      anime.id,
+    title:   anime.title,
+    image:   anime.image,
     addedAt: serverTimestamp()
   });
 }
 
+/** Remove an anime from the user's watchlist */
 async function removeFromWatchlist(animeId) {
   const uid = currentUser()?.uid;
   if (!uid) return;
   await deleteDoc(watchlistRef(uid, animeId));
 }
 
+/** Check if an anime is in the user's watchlist */
 async function isInWatchlist(animeId) {
   const uid = currentUser()?.uid;
   if (!uid) return false;
@@ -182,6 +200,7 @@ async function isInWatchlist(animeId) {
   return snap.exists();
 }
 
+/** Get all watchlisted anime, sorted by most recently added */
 async function getWatchlist() {
   const uid = currentUser()?.uid;
   if (!uid) return [];
@@ -189,13 +208,29 @@ async function getWatchlist() {
   return snap.docs.map(d => d.data());
 }
 
-// ── Exports (used via window for non-module scripts) ──────
-// We attach everything to window so regular <script> tags can access them.
+// ── Expose to window (so non-module scripts can use these) ─
+// auth.js, app.js, and player.js all access these via
+// window.fbAuth.xxx and window.fbDB.xxx
+
 window.fbAuth = {
-  currentUser, register, login, loginWithGoogle, logout, onAuthChange
+  currentUser,
+  register,
+  login,
+  loginWithGoogle,
+  logout,
+  onAuthChange
 };
+
 window.fbDB = {
-  saveProgress, getProgress, getWatchHistory,
-  addFavorite, removeFavorite, isFavorite, getFavorites,
-  addToWatchlist, removeFromWatchlist, isInWatchlist, getWatchlist
+  saveProgress,
+  getProgress,
+  getWatchHistory,
+  addFavorite,
+  removeFavorite,
+  isFavorite,
+  getFavorites,
+  addToWatchlist,
+  removeFromWatchlist,
+  isInWatchlist,
+  getWatchlist
 };
