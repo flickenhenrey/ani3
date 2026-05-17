@@ -54,15 +54,12 @@ if (searchInput) {
 }
 
 // ── Auth state callback ───────────────────────────────────
-// auth.js calls this when auth state resolves.
-// We wait for it before loading progress so we know if user is signed in.
 let authResolved = false;
 let authUser     = null;
 
 window.onUserReady = async function(user) {
   authUser     = user;
   authResolved = true;
-  // If init already ran and is waiting for auth, resume progress loading
   if (currentAnime && allEpisodes.length) {
     await resumeOrStart();
   }
@@ -75,7 +72,7 @@ async function init() {
     currentAnime = await getAnimeById(animeId);
     renderDetails(currentAnime);
 
-    // 2. Episodes from Consumet
+    // 2. Episodes from ani.zip / Anify
     const result = await fetchEpisodes(currentAnime.title, animeId);
     provider    = result.provider;
     allEpisodes = result.episodes;
@@ -87,7 +84,6 @@ async function init() {
     if (authResolved) {
       await resumeOrStart();
     }
-    // else: onUserReady will call resumeOrStart when auth resolves
 
   } catch (e) {
     console.error('Init failed:', e);
@@ -99,7 +95,6 @@ async function resumeOrStart() {
   let resumeTime = 0;
   let targetEpNum = startEp || 1;
 
-  // Try to get saved progress from Firebase
   if (authUser && window.fbDB) {
     try {
       const saved = await window.fbDB.getProgress(animeId);
@@ -151,7 +146,6 @@ function renderDetails(anime) {
   document.getElementById('details-loading').classList.add('hidden');
   document.getElementById('details-content').classList.remove('hidden');
 
-  // Favorite & Watchlist buttons (async state load)
   const btnFav = document.getElementById('btn-favorite');
   const btnWl  = document.getElementById('btn-watchlist');
 
@@ -166,7 +160,7 @@ function renderDetails(anime) {
 function renderEpisodeList(episodes) {
   const list = document.getElementById('episode-list');
   if (!episodes.length) {
-    list.innerHTML = '<div class="loading">No episodes found via Consumet API.<br>The provider may be unavailable.</div>';
+    list.innerHTML = '<div class="loading">No episodes found. The streaming provider may be temporarily unavailable.</div>';
     return;
   }
   list.innerHTML = '';
@@ -220,12 +214,14 @@ async function loadEpisode(idx, resumeTime = 0) {
   document.getElementById('custom-controls').classList.add('hidden');
 
   if (!provider) {
-    playerMsg.textContent = 'No streaming provider available. Consumet API may be down.';
+    playerMsg.textContent = 'No streaming provider available.';
     return;
   }
 
   try {
-    const { sources } = await fetchStreamSources(ep.id, provider);
+    // ✅ Pass the full episode object as the 3rd argument so the API
+    //    can use _anilistId and _providerId for stream resolution.
+    const { sources } = await fetchStreamSources(ep.id, provider, ep);
     if (!sources.length) { playerMsg.textContent = 'No streams found for this episode.'; return; }
 
     const mp4    = sources.find(s => !s.isM3U8);
