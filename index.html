@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AniStream – Watch Anime Online</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header id="site-header">
+    <div class="header-inner">
+      <a href="index.html" class="logo">AniStream</a>
+      <div class="search-wrap">
+        <input type="text" id="search-input" placeholder="Search anime..." autocomplete="off" />
+        <div id="search-results" class="search-dropdown hidden"></div>
+      </div>
+      <nav class="nav-links">
+        <a href="#trending">Trending</a>
+        <a href="#popular">Popular</a>
+        <a href="#recent">Recent</a>
+        <a href="watchlist.html">Watchlist</a>
+        <button id="header-auth-btn" class="btn-header-auth">Sign In</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- CONTINUE WATCHING -->
+    <section id="continue-watching" class="section hidden">
+      <h2 class="section-title">Continue Watching</h2>
+      <div id="continue-grid" class="anime-grid"></div>
+    </section>
+
+    <!-- TRENDING -->
+    <section id="trending" class="section">
+      <h2 class="section-title">Trending Now</h2>
+      <div id="trending-grid" class="anime-grid">
+        <div class="loading">Loading...</div>
+      </div>
+    </section>
+
+    <!-- POPULAR -->
+    <section id="popular" class="section">
+      <h2 class="section-title">All Time Popular</h2>
+      <div id="popular-grid" class="anime-grid">
+        <div class="loading">Loading...</div>
+      </div>
+    </section>
+
+    <!-- RECENTLY ADDED -->
+    <section id="recent" class="section">
+      <h2 class="section-title">Recently Added</h2>
+      <div id="recent-grid" class="anime-grid">
+        <div class="loading">Loading...</div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>AniStream &mdash; Data from AniList &amp; Consumet. For educational use only.</p>
+  </footer>
+
+  <!-- Firebase ES module loads first, exposes window.fbAuth + window.fbDB -->
+  <script type="module" src="firebase.js"></script>
+  <script src="api.js" defer></script>
+  <script src="auth.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>

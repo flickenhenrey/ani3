@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Lists – AniStream</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header id="site-header">
+    <div class="header-inner">
+      <a href="index.html" class="logo">AniStream</a>
+      <div class="search-wrap">
+        <input type="text" id="search-input" placeholder="Search anime..." autocomplete="off" />
+        <div id="search-results" class="search-dropdown hidden"></div>
+      </div>
+      <nav class="nav-links">
+        <a href="index.html">Home</a>
+        <button id="header-auth-btn" class="btn-header-auth">Sign In</button>
+      </nav>
+    </div>
+  </header>
+
+  <main style="padding:20px 16px; max-width:1280px; margin:0 auto;">
+
+    <div id="not-signed-in" class="auth-prompt hidden">
+      <p>Sign in to view your favorites and watchlist.</p>
+      <button onclick="window.showAuthModal()" class="btn-action" style="margin-top:12px;">Sign In / Register</button>
+    </div>
+
+    <section class="section" id="favs-section">
+      <h2 class="section-title">⭐ Favorites</h2>
+      <div id="favorites-grid" class="anime-grid">
+        <p class="empty-msg">Loading...</p>
+      </div>
+    </section>
+
+    <section class="section" id="wl-section">
+      <h2 class="section-title">📋 Watchlist</h2>
+      <div id="watchlist-grid" class="anime-grid">
+        <p class="empty-msg">Loading...</p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>AniStream &mdash; Data from AniList &amp; Consumet. For educational use only.</p>
+  </footer>
+
+  <script type="module" src="firebase.js"></script>
+  <script src="api.js" defer></script>
+  <script src="auth.js" defer></script>
+  <script defer>
+    function escHtml(str) {
+      return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function renderList(items, gridId, emptyMsg) {
+      const grid = document.getElementById(gridId);
+      if (!items.length) { grid.innerHTML = `<p class="empty-msg">${emptyMsg}</p>`; return; }
+      grid.innerHTML = '';
+      items.forEach(anime => {
+        const a = document.createElement('a');
+        a.href = `anime.html?id=${anime.id}`;
+        a.className = 'anime-card';
+        a.innerHTML = `
+          <img src="${escHtml(anime.image)}" alt="${escHtml(anime.title)}" loading="lazy" />
+          <div class="card-info">
+            <div class="card-title">${escHtml(anime.title)}</div>
+          </div>`;
+        grid.appendChild(a);
+      });
+    }
+
+    // Called by auth.js when auth state changes
+    window.onUserReady = async function(user) {
+      const notSignedIn = document.getElementById('not-signed-in');
+      if (!user) {
+        notSignedIn.classList.remove('hidden');
+        document.getElementById('favorites-grid').innerHTML = '';
+        document.getElementById('watchlist-grid').innerHTML = '';
+        return;
+      }
+      notSignedIn.classList.add('hidden');
+      try {
+        const [favs, wl] = await Promise.all([
+          window.fbDB.getFavorites(),
+          window.fbDB.getWatchlist()
+        ]);
+        renderList(favs, 'favorites-grid', 'No favorites yet.');
+        renderList(wl, 'watchlist-grid', 'Your watchlist is empty.');
+      } catch(e) {
+        console.error('Failed to load lists:', e);
+      }
+    };
+
+    // Search bar
+    let st = null;
+    document.getElementById('search-input').addEventListener('input', async function() {
+      clearTimeout(st);
+      const q = this.value.trim();
+      const box = document.getElementById('search-results');
+      if (q.length < 2) { box.classList.add('hidden'); return; }
+      st = setTimeout(async () => {
+        const res = await searchAnime(q);
+        renderSearchResults(res, box);
+      }, 350);
+    });
+    document.addEventListener('click', e => {
+      const si = document.getElementById('search-input');
+      const sb = document.getElementById('search-results');
+      if (!si.contains(e.target) && !sb.contains(e.target)) sb.classList.add('hidden');
+    });
+  </script>
+</body>
+</html>
