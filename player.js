@@ -72,7 +72,7 @@ async function init() {
     currentAnime = await getAnimeById(animeId);
     renderDetails(currentAnime);
 
-    // 2. Episodes from ani.zip / Anify
+    // 2. Episodes from ani.zip (with MegaPlay embed URLs)
     const result = await fetchEpisodes(currentAnime.title, animeId);
     provider    = result.provider;
     allEpisodes = result.episodes;
@@ -80,10 +80,11 @@ async function init() {
     renderEpisodeList(filteredEps);
     document.getElementById('player-section').classList.remove('hidden');
 
-    // 3. Resume (waits for auth if needed)
+    // 3. Resume/start
     if (authResolved) {
       await resumeOrStart();
     }
+    // else: onUserReady will call resumeOrStart when auth resolves
 
   } catch (e) {
     console.error('Init failed:', e);
@@ -92,7 +93,7 @@ async function init() {
 }
 
 async function resumeOrStart() {
-  let resumeTime = 0;
+  let resumeTime  = 0;
   let targetEpNum = startEp || 1;
 
   if (authUser && window.fbDB) {
@@ -219,19 +220,18 @@ async function loadEpisode(idx, resumeTime = 0) {
   }
 
   try {
-    // ✅ Pass the full episode object as the 3rd argument so the API
-    //    can use _anilistId and _providerId for stream resolution.
     const { sources } = await fetchStreamSources(ep.id, provider, ep);
     if (!sources.length) { playerMsg.textContent = 'No streams found for this episode.'; return; }
 
-    const mp4    = sources.find(s => !s.isM3U8);
-    const m3u8   = sources.find(s => s.isM3U8);
-    const chosen = mp4 || m3u8;
+    const source = sources[0];
 
-    if (chosen.isM3U8 && !video.canPlayType('application/vnd.apple.mpegurl')) {
-      playInIframe(chosen.url);
+    if (source.isEmbed) {
+      // ✅ MegaPlay embed: render an iframe directly
+      playInIframe(source.url);
+    } else if (source.isM3U8 && !video.canPlayType('application/vnd.apple.mpegurl')) {
+      playInIframe(source.url);
     } else {
-      playInVideoTag(chosen.url, resumeTime);
+      playInVideoTag(source.url, resumeTime);
     }
 
     startProgressSave(ep);
@@ -242,6 +242,29 @@ async function loadEpisode(idx, resumeTime = 0) {
   }
 }
 
+// ── Play in iframe (MegaPlay embed) ─────────────────────
+function playInIframe(url) {
+  playerMsg.style.display = 'none';
+  video.style.display = 'none';
+  document.getElementById('custom-controls').classList.add('hidden');
+
+  // Reuse or create the iframe inside iframeBox
+  let iframe = iframeBox.querySelector('iframe');
+  if (!iframe) {
+    iframe = document.createElement('iframe');
+    iframe.setAttribute('allowfullscreen', '');
+    iframe.setAttribute('allow', 'autoplay; fullscreen; picture-in-picture');
+    iframe.setAttribute('frameborder', '0');
+    iframe.setAttribute('scrolling', 'no');
+    iframe.style.cssText = 'width:100%;height:100%;border:none;display:block;';
+    iframeBox.appendChild(iframe);
+  }
+
+  iframe.src = url;
+  iframeBox.style.display = 'block';
+}
+
+// ── Play in native video tag ─────────────────────────────
 function playInVideoTag(url, resumeTime) {
   playerMsg.style.display = 'none';
   iframeBox.style.display = 'none';
@@ -254,15 +277,6 @@ function playInVideoTag(url, resumeTime) {
     video.play().catch(() => {});
     updateTimeDisplay();
   }, { once: true });
-}
-
-function playInIframe(url) {
-  playerMsg.innerHTML = `
-    <div>
-      <p style="margin-bottom:12px">HLS stream detected – use the link below or install "Native HLS Playback" extension.</p>
-      <a href="${url}" target="_blank" rel="noopener" style="color:var(--accent)">▶ Open stream in new tab</a>
-    </div>`;
-  playerMsg.style.display = 'flex';
 }
 
 // ── Custom Controls ──────────────────────────────────────
@@ -292,6 +306,7 @@ function fmtTime(s) {
 function startProgressSave(ep) {
   clearInterval(progressTimer);
   progressTimer = setInterval(async () => {
+    // Progress saving only works with native video tag (not iframe)
     if (!video.duration || video.paused || !authUser || !window.fbDB) return;
     try {
       await window.fbDB.saveProgress({
