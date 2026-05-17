@@ -1,29 +1,16 @@
 /* =========================================================
    api.js – All API calls for AniStream
-   Sources: AniList GraphQL API, Consumet API (public instance)
+   Sources: AniList GraphQL API, ani.zip (episodes), anify (streams)
    ========================================================= */
 
 // ── Config ──────────────────────────────────────────────
 const ANILIST_URL = 'https://graphql.anilist.co';
 
-// Public Consumet instances (fallback chain)
-const CONSUMET_BASES = [
-  'https://api.consumet.org',
-  'https://consumet-api.onrender.com'
-];
+// ani.zip: maps AniList IDs → episode lists (no API key needed)
+const ANIZIP_BASE = 'https://api.ani.zip/mappings';
 
-let CONSUMET_BASE = CONSUMET_BASES[0];
-
-// Test which Consumet instance responds
-async function resolveConsumetBase() {
-  for (const base of CONSUMET_BASES) {
-    try {
-      const r = await fetch(`${base}/anime/gogoanime/spy-x-family?page=1`, { signal: AbortSignal.timeout(4000) });
-      if (r.ok) { CONSUMET_BASE = base; return; }
-    } catch { /* try next */ }
-  }
-}
-resolveConsumetBase();
+// Anify: free anime streaming API with AniList ID support
+const ANIFY_BASE = 'https://api.anify.tv';
 
 // ── AniList Helpers ──────────────────────────────────────
 async function anilistQuery(query, variables = {}) {
@@ -54,11 +41,6 @@ const MEDIA_FRAGMENT = `
 `;
 
 // ── Search ───────────────────────────────────────────────
-/**
- * Search anime by title via AniList
- * @param {string} query
- * @returns {Array} list of anime objects
- */
 async function searchAnime(query) {
   const gql = `
     query($search: String) {
@@ -158,95 +140,138 @@ function stripHtml(str) {
   return str.replace(/<[^>]*>/g, '').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#039;/g,"'").replace(/&quot;/g,'"');
 }
 
-// ── Consumet: Fetch Episodes ─────────────────────────────
+// ── Fetch Episodes ───────────────────────────────────────
 /**
- * Search Consumet for the anime title, return episode list
- * Uses aniwatch (zoro) provider first, falls back to gogoanime
+ * Fetch episode list using AniList ID.
+ * Primary:  ani.zip  (fast, reliable, has episode metadata)
+ * Fallback: Anify    (also uses AniList IDs directly)
  */
 async function fetchEpisodes(animeTitle, anilistId) {
-  // Try aniwatch (Zoro/Hianime) first
+  // 1. Try ani.zip (best option — direct AniList ID mapping)
   try {
-    const eps = await fetchEpisodesAniwatch(anilistId);
-    if (eps && eps.length > 0) return { provider: 'aniwatch', episodes: eps };
-  } catch (e) { console.warn('Aniwatch failed, trying gogoanime:', e.message); }
+    const eps = await fetchEpisodesAnizip(anilistId);
+    if (eps && eps.length > 0) return { provider: 'anify', episodes: eps };
+  } catch (e) {
+    console.warn('ani.zip failed, trying Anify:', e.message);
+  }
 
-  // Fallback: gogoanime
+  // 2. Fallback: Anify API
   try {
-    const eps = await fetchEpisodesGogoanime(animeTitle);
-    if (eps && eps.length > 0) return { provider: 'gogoanime', episodes: eps };
-  } catch (e) { console.warn('Gogoanime also failed:', e.message); }
+    const eps = await fetchEpisodesAnify(anilistId);
+    if (eps && eps.length > 0) return { provider: 'anify', episodes: eps };
+  } catch (e) {
+    console.warn('Anify also failed:', e.message);
+  }
 
   return { provider: null, episodes: [] };
 }
 
-async function fetchEpisodesAniwatch(anilistId) {
-  const url = `${CONSUMET_BASE}/meta/anilist/episodes/${anilistId}?provider=zoro`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  // May return array directly or { results: [] }
-  const list = Array.isArray(json) ? json : (json.results || json.episodes || []);
-  return list.map(ep => ({
-    id: ep.id,
-    number: ep.number,
-    title: ep.title || `Episode ${ep.number}`,
-    image: ep.image || ep.img || null,
-    url: ep.url || null
-  }));
-}
-
-async function fetchEpisodesGogoanime(animeTitle) {
-  // Search for the anime on gogoanime
-  const search = encodeURIComponent(animeTitle);
-  const searchRes = await fetch(`${CONSUMET_BASE}/anime/gogoanime/${search}`, { signal: AbortSignal.timeout(8000) });
-  if (!searchRes.ok) throw new Error(`Gogoanime search HTTP ${searchRes.status}`);
-  const searchJson = await searchRes.json();
-  const results = searchJson.results || [];
-  if (!results.length) throw new Error('No results on gogoanime');
-
-  // Pick the best match (first result)
-  const match = results[0];
-  const detailRes = await fetch(`${CONSUMET_BASE}/anime/gogoanime/info/${match.id}`, { signal: AbortSignal.timeout(8000) });
-  if (!detailRes.ok) throw new Error(`Gogoanime info HTTP ${detailRes.status}`);
-  const detail = await detailRes.json();
-  const eps = detail.episodes || [];
-  return eps.map(ep => ({
-    id: ep.id,
-    number: ep.number,
-    title: ep.title || `Episode ${ep.number}`,
-    image: ep.image || null,
-    url: ep.url || null
-  }));
-}
-
-// ── Consumet: Fetch Stream Sources ───────────────────────
 /**
- * Fetch video streaming sources for an episode
- * @param {string} episodeId - episode ID from Consumet
- * @param {string} provider  - 'aniwatch' | 'gogoanime'
- * @returns {{ sources: [], headers: {} }}
+ * Fetch episodes from ani.zip using AniList ID.
+ * Returns episode list in the format player.js expects.
  */
-async function fetchStreamSources(episodeId, provider) {
-  let url;
-  if (provider === 'aniwatch') {
-    url = `${CONSUMET_BASE}/anime/zoro/watch?episodeId=${encodeURIComponent(episodeId)}`;
-  } else {
-    url = `${CONSUMET_BASE}/anime/gogoanime/watch/${encodeURIComponent(episodeId)}`;
+async function fetchEpisodesAnizip(anilistId) {
+  const url = `${ANIZIP_BASE}?anilist_id=${anilistId}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error(`ani.zip HTTP ${res.status}`);
+  const json = await res.json();
+
+  // ani.zip returns { episodes: { "1": {...}, "2": {...} } }
+  const episodesObj = json.episodes;
+  if (!episodesObj || typeof episodesObj !== 'object') throw new Error('No episodes in ani.zip response');
+
+  return Object.values(episodesObj).map(ep => ({
+    id:     `${anilistId}-episode-${ep.episodeNumber || ep.episode}`,  // synthetic ID for Anify stream lookup
+    number: ep.episodeNumber || ep.episode || 0,
+    title:  ep.title?.en || ep.title?.ja || `Episode ${ep.episodeNumber || ep.episode}`,
+    image:  ep.image || null,
+    url:    null,
+    // store anilistId on each ep so fetchStreamSources can use it
+    _anilistId: String(anilistId)
+  })).sort((a, b) => a.number - b.number);
+}
+
+/**
+ * Fetch episodes from Anify using AniList ID.
+ */
+async function fetchEpisodesAnify(anilistId) {
+  // Anify info endpoint accepts AniList ID
+  const url = `${ANIFY_BASE}/info/${anilistId}?type=anime`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error(`Anify info HTTP ${res.status}`);
+  const json = await res.json();
+
+  // Anify returns episodes under episodes[].providerId episodes
+  // The structure is: { episodes: { data: [ { providerId, episodes: [...] } ] } }
+  const episodeProviders = json.episodes?.data || [];
+  if (!episodeProviders.length) throw new Error('No episode providers from Anify');
+
+  // Prefer 'gogoanime' or 'zoro' provider
+  const preferred = episodeProviders.find(p => p.providerId === 'zoro') ||
+                    episodeProviders.find(p => p.providerId === 'gogoanime') ||
+                    episodeProviders[0];
+
+  return (preferred.episodes || []).map(ep => ({
+    id:     ep.id,
+    number: ep.number,
+    title:  ep.title || `Episode ${ep.number}`,
+    image:  ep.img || ep.image || null,
+    url:    null,
+    _providerId: preferred.providerId,
+    _anilistId:  String(anilistId)
+  })).sort((a, b) => a.number - b.number);
+}
+
+// ── Fetch Stream Sources ─────────────────────────────────
+/**
+ * Fetch video streaming sources for an episode via Anify.
+ * @param {string} episodeId  - episode ID from our episode list
+ * @param {string} provider   - always 'anify' now (kept for compat)
+ * @param {object} epObj      - the full episode object (has _anilistId, _providerId)
+ * @returns {{ sources: [], headers: {}, subtitles: [] }}
+ */
+async function fetchStreamSources(episodeId, provider, epObj = {}) {
+  const anilistId  = epObj._anilistId;
+  const providerId = epObj._providerId || 'zoro';
+
+  // Extract episode number from synthetic IDs like "12345-episode-3"
+  const epNumMatch = String(episodeId).match(/episode-(\d+)/i);
+  const episodeNum = epNumMatch ? epNumMatch[1] : null;
+
+  // Build Anify watch URL
+  // Format: /watch/{anilistId}/{providerId}/{watchId}?subType=sub
+  let watchId = episodeId;
+
+  // If it's a synthetic ani.zip ID, we need to find the real Anify episode ID
+  if (epNumMatch && anilistId) {
+    try {
+      const anifyEps = await fetchEpisodesAnify(anilistId);
+      const match = anifyEps.find(e => String(e.number) === String(episodeNum));
+      if (match) {
+        watchId = match.id;
+        epObj._providerId = match._providerId || 'zoro';
+      }
+    } catch(e) {
+      console.warn('Could not resolve real episode ID from Anify:', e.message);
+    }
   }
 
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-  if (!res.ok) throw new Error(`Stream fetch HTTP ${res.status}`);
+  const finalProvider = epObj._providerId || providerId;
+  const url = `${ANIFY_BASE}/watch/${anilistId}/${finalProvider}/${encodeURIComponent(watchId)}?subType=sub`;
+
+  const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+  if (!res.ok) throw new Error(`Anify watch HTTP ${res.status}`);
   const json = await res.json();
 
   const sources = (json.sources || []).map(s => ({
-    url: s.url,
+    url:     s.url,
     quality: s.quality || 'default',
-    isM3U8: s.isM3U8 || (s.url || '').includes('.m3u8')
+    isM3U8:  s.isM3U8 !== undefined ? s.isM3U8 : (s.url || '').includes('.m3u8')
   }));
 
   return {
     sources,
-    headers: json.headers || {},
+    headers:   json.headers   || {},
     subtitles: json.subtitles || []
   };
 }
