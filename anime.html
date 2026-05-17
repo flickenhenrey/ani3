@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Watch – AniStream</title>
+  <link rel="icon" type="image/png" href="images/ball.png" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header id="site-header">
+    <div class="header-inner">
+      <a href="index.html" class="logo">
+        <img src="images/ball.png" alt="AniStream" class="logo-img" />
+        AniStream
+      </a>
+      <div class="search-wrap">
+        <input type="text" id="search-input" placeholder="Search anime..." autocomplete="off" />
+        <div id="search-results" class="search-dropdown hidden"></div>
+      </div>
+      <nav class="nav-links">
+        <a href="index.html">Home</a>
+        <a href="watchlist.html">Watchlist</a>
+        <button id="header-auth-btn" class="btn-header-auth">Sign In</button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ANIME BANNER -->
+  <div id="anime-banner" class="anime-banner hidden">
+    <div class="banner-overlay"></div>
+  </div>
+
+  <main id="watch-main">
+
+    <!-- DETAILS PANEL -->
+    <section id="details-panel" class="details-panel">
+      <div id="details-loading" class="loading">Loading anime info...</div>
+      <div id="details-content" class="hidden">
+        <div class="details-top">
+          <img id="anime-poster" src="" alt="poster" class="anime-poster" />
+          <div class="details-info">
+            <h1 id="anime-title"></h1>
+            <div id="anime-meta" class="anime-meta"></div>
+            <div id="anime-genres" class="genre-list"></div>
+            <p id="anime-desc" class="anime-desc"></p>
+            <div class="action-buttons">
+              <button id="btn-favorite" class="btn-action">☆ Favorite</button>
+              <button id="btn-watchlist" class="btn-action">+ Watchlist</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PLAYER + EPISODES -->
+    <section id="player-section" class="player-section hidden">
+      <div class="player-wrap">
+        <div id="player-container">
+          <div id="player-loading" class="player-msg">Select an episode to start watching.</div>
+          <video id="main-video" controls preload="metadata" style="display:none;width:100%;"></video>
+          <div id="iframe-container" style="display:none;">
+            <iframe id="stream-iframe" allowfullscreen frameborder="0"
+              allow="autoplay; encrypted-media; fullscreen"
+              style="width:100%;height:100%;border:none;"></iframe>
+          </div>
+          <div id="custom-controls" class="custom-controls hidden">
+            <button id="btn-prev-ep" title="Previous Episode">⏮ Prev</button>
+            <button id="btn-skip-back" title="Skip Back 10s">◀ 10s</button>
+            <span id="time-display">0:00 / 0:00</span>
+            <button id="btn-skip-fwd" title="Skip Forward 10s">10s ▶</button>
+            <button id="btn-next-ep" title="Next Episode">Next ⏭</button>
+            <label class="autonext-label">
+              <input type="checkbox" id="auto-next" checked /> Auto-next
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- EPISODE SIDEBAR -->
+      <div id="episode-sidebar" class="episode-sidebar">
+        <div class="sidebar-header">
+          <span>Episodes</span>
+          <input type="text" id="ep-search" placeholder="Filter..." class="ep-search" />
+        </div>
+        <div id="episode-list" class="episode-list">
+          <div class="loading">Loading episodes...</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>AniStream &mdash; Data from AniList &amp; Consumet. For educational use only.</p>
+  </footer>
+
+  <script type="module" src="firebase.js"></script>
+  <script src="api.js" defer></script>
+  <script src="auth.js" defer></script>
+  <script src="player.js" defer></script>
+</body>
+</html>
