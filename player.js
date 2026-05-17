@@ -1,9 +1,5 @@
 /* =========================================================
    player.js – Anime detail + watch page
-   Uses Firebase (window.fbDB / window.fbAuth) for:
-     - Watch progress (save/resume)
-     - Favorites
-     - Watchlist
    ========================================================= */
 
 // ── State ────────────────────────────────────────────────
@@ -14,9 +10,9 @@ let currentEpIdx  = 0;
 let provider      = null;
 let progressTimer = null;
 
-const video       = document.getElementById('main-video');
-const iframeBox   = document.getElementById('iframe-container');
-const playerMsg   = document.getElementById('player-loading');
+const video    = document.getElementById('main-video');
+const iframeBox = document.getElementById('iframe-container');
+const playerMsg = document.getElementById('player-loading');
 
 // ── URL Params ───────────────────────────────────────────
 const params  = new URLSearchParams(location.search);
@@ -28,7 +24,6 @@ if (!animeId) {
   throw new Error('No anime ID');
 }
 
-// ── Escape helper ─────────────────────────────────────────
 function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -49,17 +44,24 @@ if (searchInput) {
     }, 350);
   });
   document.addEventListener('click', e => {
-    if (!searchInput.contains(e.target) && !searchBox.contains(e.target)) searchBox.classList.add('hidden');
+    if (!searchInput.contains(e.target) && !searchBox.contains(e.target))
+      searchBox.classList.add('hidden');
   });
 }
 
-// ── Auth state callback ───────────────────────────────────
+// ── Auth state ───────────────────────────────────────────
 let authResolved = false;
 let authUser     = null;
 
 window.onUserReady = async function(user) {
   authUser     = user;
   authResolved = true;
+  // Refresh fav/watchlist buttons now that we know auth state
+  const btnFav = document.getElementById('btn-favorite');
+  const btnWl  = document.getElementById('btn-watchlist');
+  if (btnFav) refreshFavBtn(btnFav);
+  if (btnWl)  refreshWlBtn(btnWl);
+  // Resume progress if init already finished
   if (currentAnime && allEpisodes.length) {
     await resumeOrStart();
   }
@@ -68,11 +70,9 @@ window.onUserReady = async function(user) {
 // ── INIT ─────────────────────────────────────────────────
 async function init() {
   try {
-    // 1. Anime details from AniList
     currentAnime = await getAnimeById(animeId);
     renderDetails(currentAnime);
 
-    // 2. Episodes from ani.zip (with MegaPlay embed URLs)
     const result = await fetchEpisodes(currentAnime.title, animeId);
     provider    = result.provider;
     allEpisodes = result.episodes;
@@ -80,11 +80,10 @@ async function init() {
     renderEpisodeList(filteredEps);
     document.getElementById('player-section').classList.remove('hidden');
 
-    // 3. Resume/start
     if (authResolved) {
       await resumeOrStart();
     }
-    // else: onUserReady will call resumeOrStart when auth resolves
+    // else: onUserReady will call resumeOrStart
 
   } catch (e) {
     console.error('Init failed:', e);
@@ -96,6 +95,7 @@ async function resumeOrStart() {
   let resumeTime  = 0;
   let targetEpNum = startEp || 1;
 
+  // Only touch Firebase if user is signed in
   if (authUser && window.fbDB) {
     try {
       const saved = await window.fbDB.getProgress(animeId);
@@ -116,14 +116,16 @@ async function resumeOrStart() {
   }
 }
 
-// ── Render Anime Details ─────────────────────────────────
+// ── Render Details ───────────────────────────────────────
 function renderDetails(anime) {
   document.title = `${anime.title} – AniStream`;
 
   if (anime.banner) {
     const banner = document.getElementById('anime-banner');
-    banner.style.backgroundImage = `url(${anime.banner})`;
-    banner.classList.remove('hidden');
+    if (banner) {
+      banner.style.backgroundImage = `url(${anime.banner})`;
+      banner.classList.remove('hidden');
+    }
   }
 
   document.getElementById('anime-poster').src = anime.image;
@@ -150,11 +152,22 @@ function renderDetails(anime) {
   const btnFav = document.getElementById('btn-favorite');
   const btnWl  = document.getElementById('btn-watchlist');
 
-  refreshFavBtn(btnFav);
-  refreshWlBtn(btnWl);
+  // Set placeholder text immediately — real state loads once auth resolves
+  if (btnFav) {
+    btnFav.textContent = '☆ Favorite';
+    btnFav.addEventListener('click', () => toggleFavorite(anime, btnFav));
+  }
+  if (btnWl) {
+    btnWl.textContent = '+ Watchlist';
+    btnWl.addEventListener('click', () => toggleWatchlist(anime, btnWl));
+  }
 
-  btnFav.addEventListener('click', () => toggleFavorite(anime, btnFav));
-  btnWl.addEventListener('click',  () => toggleWatchlist(anime, btnWl));
+  // If auth already resolved, update buttons now
+  if (authResolved) {
+    if (btnFav) refreshFavBtn(btnFav);
+    if (btnWl)  refreshWlBtn(btnWl);
+  }
+  // else: onUserReady will call refreshFavBtn / refreshWlBtn
 }
 
 // ── Episode List ─────────────────────────────────────────
@@ -226,7 +239,6 @@ async function loadEpisode(idx, resumeTime = 0) {
     const source = sources[0];
 
     if (source.isEmbed) {
-      // ✅ MegaPlay embed: render an iframe directly
       playInIframe(source.url);
     } else if (source.isM3U8 && !video.canPlayType('application/vnd.apple.mpegurl')) {
       playInIframe(source.url);
@@ -242,13 +254,11 @@ async function loadEpisode(idx, resumeTime = 0) {
   }
 }
 
-// ── Play in iframe (MegaPlay embed) ─────────────────────
 function playInIframe(url) {
   playerMsg.style.display = 'none';
   video.style.display = 'none';
   document.getElementById('custom-controls').classList.add('hidden');
 
-  // Reuse or create the iframe inside iframeBox
   let iframe = iframeBox.querySelector('iframe');
   if (!iframe) {
     iframe = document.createElement('iframe');
@@ -264,7 +274,6 @@ function playInIframe(url) {
   iframeBox.style.display = 'block';
 }
 
-// ── Play in native video tag ─────────────────────────────
 function playInVideoTag(url, resumeTime) {
   playerMsg.style.display = 'none';
   iframeBox.style.display = 'none';
@@ -302,11 +311,10 @@ function fmtTime(s) {
   return `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
-// ── Progress Saving → Firebase ───────────────────────────
+// ── Progress Saving ──────────────────────────────────────
 function startProgressSave(ep) {
   clearInterval(progressTimer);
   progressTimer = setInterval(async () => {
-    // Progress saving only works with native video tag (not iframe)
     if (!video.duration || video.paused || !authUser || !window.fbDB) return;
     try {
       await window.fbDB.saveProgress({
@@ -321,43 +329,45 @@ function startProgressSave(ep) {
   }, 5000);
 }
 
-// ── Favorites → Firebase ─────────────────────────────────
+// ── Favorites ────────────────────────────────────────────
 async function refreshFavBtn(btn) {
   if (!authUser || !window.fbDB) { btn.textContent = '☆ Favorite'; return; }
-  const active = await window.fbDB.isFavorite(animeId);
-  btn.textContent = active ? '★ Favorited' : '☆ Favorite';
-  btn.classList.toggle('active', active);
+  try {
+    const active = await window.fbDB.isFavorite(animeId);
+    btn.textContent = active ? '★ Favorited' : '☆ Favorite';
+    btn.classList.toggle('active', active);
+  } catch(e) { btn.textContent = '☆ Favorite'; }
 }
 
 async function toggleFavorite(anime, btn) {
   if (!authUser) { window.showAuthModal?.(); return; }
-  const active = await window.fbDB.isFavorite(animeId);
-  if (active) {
-    await window.fbDB.removeFavorite(animeId);
-  } else {
-    await window.fbDB.addFavorite({ id: anime.id, title: anime.title, image: anime.image });
-  }
-  refreshFavBtn(btn);
+  try {
+    const active = await window.fbDB.isFavorite(animeId);
+    if (active) await window.fbDB.removeFavorite(animeId);
+    else await window.fbDB.addFavorite({ id: anime.id, title: anime.title, image: anime.image });
+    refreshFavBtn(btn);
+  } catch(e) { console.warn('Toggle favorite failed:', e); }
 }
 
-// ── Watchlist → Firebase ──────────────────────────────────
+// ── Watchlist ─────────────────────────────────────────────
 async function refreshWlBtn(btn) {
   if (!authUser || !window.fbDB) { btn.textContent = '+ Watchlist'; return; }
-  const active = await window.fbDB.isInWatchlist(animeId);
-  btn.textContent = active ? '✓ In Watchlist' : '+ Watchlist';
-  btn.classList.toggle('active', active);
+  try {
+    const active = await window.fbDB.isInWatchlist(animeId);
+    btn.textContent = active ? '✓ In Watchlist' : '+ Watchlist';
+    btn.classList.toggle('active', active);
+  } catch(e) { btn.textContent = '+ Watchlist'; }
 }
 
 async function toggleWatchlist(anime, btn) {
   if (!authUser) { window.showAuthModal?.(); return; }
-  const active = await window.fbDB.isInWatchlist(animeId);
-  if (active) {
-    await window.fbDB.removeFromWatchlist(animeId);
-  } else {
-    await window.fbDB.addToWatchlist({ id: anime.id, title: anime.title, image: anime.image });
-  }
-  refreshWlBtn(btn);
+  try {
+    const active = await window.fbDB.isInWatchlist(animeId);
+    if (active) await window.fbDB.removeFromWatchlist(animeId);
+    else await window.fbDB.addToWatchlist({ id: anime.id, title: anime.title, image: anime.image });
+    refreshWlBtn(btn);
+  } catch(e) { console.warn('Toggle watchlist failed:', e); }
 }
 
-// ── Start ────────────────────────────────────────────────
+// ── Start ─────────────────────────────────────────────────
 init();
