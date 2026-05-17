@@ -1,16 +1,17 @@
 /* =========================================================
    api.js – All API calls for AniStream
-   Sources: AniList GraphQL API, ani.zip (episodes), anify (streams)
+   Sources: AniList GraphQL API, ani.zip (episodes), MegaPlay (player)
    ========================================================= */
 
 // ── Config ──────────────────────────────────────────────
 const ANILIST_URL = 'https://graphql.anilist.co';
 
-// ani.zip: maps AniList IDs → episode lists (no API key needed)
+// ani.zip: maps AniList IDs → episode lists
 const ANIZIP_BASE = 'https://api.ani.zip/mappings';
 
-// Anify: free anime streaming API with AniList ID support
-const ANIFY_BASE = 'https://api.anify.tv';
+// MegaPlay: iframe embed using AniList ID + episode number (no API key needed)
+// Format: https://megaplay.buzz/stream/ani/{anilist-id}/{ep-num}/sub
+const MEGAPLAY_BASE = 'https://megaplay.buzz/stream/ani';
 
 // ── AniList Helpers ──────────────────────────────────────
 async function anilistQuery(query, variables = {}) {
@@ -24,7 +25,6 @@ async function anilistQuery(query, variables = {}) {
   return json.data;
 }
 
-// Common media fragment
 const MEDIA_FRAGMENT = `
   id
   title { romaji english }
@@ -64,9 +64,7 @@ async function getTrending(page = 1, perPage = 20) {
   const gql = `
     query($page: Int, $perPage: Int) {
       Page(page: $page, perPage: $perPage) {
-        media(type: ANIME, sort: TRENDING_DESC, isAdult: false) {
-          ${MEDIA_FRAGMENT}
-        }
+        media(type: ANIME, sort: TRENDING_DESC, isAdult: false) { ${MEDIA_FRAGMENT} }
       }
     }`;
   const data = await anilistQuery(gql, { page, perPage });
@@ -77,9 +75,7 @@ async function getPopular(page = 1, perPage = 20) {
   const gql = `
     query($page: Int, $perPage: Int) {
       Page(page: $page, perPage: $perPage) {
-        media(type: ANIME, sort: POPULARITY_DESC, isAdult: false) {
-          ${MEDIA_FRAGMENT}
-        }
+        media(type: ANIME, sort: POPULARITY_DESC, isAdult: false) { ${MEDIA_FRAGMENT} }
       }
     }`;
   const data = await anilistQuery(gql, { page, perPage });
@@ -90,17 +86,16 @@ async function getRecentlyAdded(page = 1, perPage = 20) {
   const gql = `
     query($page: Int, $perPage: Int, $season: MediaSeason, $year: Int) {
       Page(page: $page, perPage: $perPage) {
-        media(type: ANIME, sort: START_DATE_DESC, isAdult: false, season: $season, seasonYear: $year) {
-          ${MEDIA_FRAGMENT}
-        }
+        media(type: ANIME, sort: START_DATE_DESC, isAdult: false, season: $season, seasonYear: $year) { ${MEDIA_FRAGMENT} }
       }
     }`;
   const now = new Date();
-  const month = now.getMonth();
   const seasons = ['WINTER','WINTER','SPRING','SPRING','SPRING','SUMMER','SUMMER','SUMMER','FALL','FALL','FALL','WINTER'];
-  const season = seasons[month];
-  const year = now.getFullYear();
-  const data = await anilistQuery(gql, { page, perPage, season, year });
+  const data = await anilistQuery(gql, {
+    page, perPage,
+    season: seasons[now.getMonth()],
+    year: now.getFullYear()
+  });
   return data.Page.media.map(normalizeMedia);
 }
 
@@ -137,146 +132,89 @@ function normalizeMedia(m) {
 }
 
 function stripHtml(str) {
-  return str.replace(/<[^>]*>/g, '').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#039;/g,"'").replace(/&quot;/g,'"');
+  return str
+    .replace(/<[^>]*>/g, '')
+    .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+    .replace(/&#039;/g,"'").replace(/&quot;/g,'"');
 }
 
-// ── Fetch Episodes ───────────────────────────────────────
+// ── Fetch Episodes via ani.zip ───────────────────────────
 /**
- * Fetch episode list using AniList ID.
- * Primary:  ani.zip  (fast, reliable, has episode metadata)
- * Fallback: Anify    (also uses AniList IDs directly)
+ * Returns { provider: 'megaplay', episodes: [...] }
+ * Each episode carries _anilistId so the player can build the embed URL.
  */
 async function fetchEpisodes(animeTitle, anilistId) {
-  // 1. Try ani.zip (best option — direct AniList ID mapping)
+  // Try ani.zip first (has episode titles + thumbnails)
   try {
     const eps = await fetchEpisodesAnizip(anilistId);
-    if (eps && eps.length > 0) return { provider: 'anify', episodes: eps };
+    if (eps && eps.length > 0) return { provider: 'megaplay', episodes: eps };
   } catch (e) {
-    console.warn('ani.zip failed, trying Anify:', e.message);
+    console.warn('ani.zip failed, generating stubs from AniList:', e.message);
   }
 
-  // 2. Fallback: Anify API
+  // Fallback: generate numbered stubs from AniList episode count
   try {
-    const eps = await fetchEpisodesAnify(anilistId);
-    if (eps && eps.length > 0) return { provider: 'anify', episodes: eps };
-  } catch (e) {
-    console.warn('Anify also failed:', e.message);
-  }
+    const info = await getAnimeById(anilistId);
+    const count = typeof info.episodes === 'number' ? info.episodes : 0;
+    if (count > 0) {
+      const stubs = Array.from({ length: count }, (_, i) => ({
+        id:    `${anilistId}-episode-${i + 1}`,
+        number: i + 1,
+        title: `Episode ${i + 1}`,
+        image: null,
+        _anilistId: String(anilistId)
+      }));
+      return { provider: 'megaplay', episodes: stubs };
+    }
+  } catch (e) { /* ignore */ }
 
   return { provider: null, episodes: [] };
 }
 
-/**
- * Fetch episodes from ani.zip using AniList ID.
- * Returns episode list in the format player.js expects.
- */
 async function fetchEpisodesAnizip(anilistId) {
   const url = `${ANIZIP_BASE}?anilist_id=${anilistId}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`ani.zip HTTP ${res.status}`);
   const json = await res.json();
 
-  // ani.zip returns { episodes: { "1": {...}, "2": {...} } }
   const episodesObj = json.episodes;
   if (!episodesObj || typeof episodesObj !== 'object') throw new Error('No episodes in ani.zip response');
 
-  return Object.values(episodesObj).map(ep => ({
-    id:     `${anilistId}-episode-${ep.episodeNumber || ep.episode}`,  // synthetic ID for Anify stream lookup
-    number: ep.episodeNumber || ep.episode || 0,
-    title:  ep.title?.en || ep.title?.ja || `Episode ${ep.episodeNumber || ep.episode}`,
-    image:  ep.image || null,
-    url:    null,
-    // store anilistId on each ep so fetchStreamSources can use it
-    _anilistId: String(anilistId)
-  })).sort((a, b) => a.number - b.number);
+  return Object.values(episodesObj)
+    .map(ep => ({
+      id:    `${anilistId}-episode-${ep.episodeNumber ?? ep.episode}`,
+      number: ep.episodeNumber ?? ep.episode ?? 0,
+      title: ep.title?.en || ep.title?.ja || `Episode ${ep.episodeNumber ?? ep.episode}`,
+      image: ep.image || null,
+      _anilistId: String(anilistId)
+    }))
+    .sort((a, b) => a.number - b.number);
 }
 
+// ── MegaPlay Embed URL builder ───────────────────────────
 /**
- * Fetch episodes from Anify using AniList ID.
+ * Build the MegaPlay iframe src for a given episode.
+ * No network call needed — URL is constructed directly.
+ * @param {object} ep       - episode object (needs _anilistId + number)
+ * @param {string} language - 'sub' or 'dub'
  */
-async function fetchEpisodesAnify(anilistId) {
-  // Anify info endpoint accepts AniList ID
-  const url = `${ANIFY_BASE}/info/${anilistId}?type=anime`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-  if (!res.ok) throw new Error(`Anify info HTTP ${res.status}`);
-  const json = await res.json();
-
-  // Anify returns episodes under episodes[].providerId episodes
-  // The structure is: { episodes: { data: [ { providerId, episodes: [...] } ] } }
-  const episodeProviders = json.episodes?.data || [];
-  if (!episodeProviders.length) throw new Error('No episode providers from Anify');
-
-  // Prefer 'gogoanime' or 'zoro' provider
-  const preferred = episodeProviders.find(p => p.providerId === 'zoro') ||
-                    episodeProviders.find(p => p.providerId === 'gogoanime') ||
-                    episodeProviders[0];
-
-  return (preferred.episodes || []).map(ep => ({
-    id:     ep.id,
-    number: ep.number,
-    title:  ep.title || `Episode ${ep.number}`,
-    image:  ep.img || ep.image || null,
-    url:    null,
-    _providerId: preferred.providerId,
-    _anilistId:  String(anilistId)
-  })).sort((a, b) => a.number - b.number);
+function getMegaplayEmbedUrl(ep, language = 'sub') {
+  return `${MEGAPLAY_BASE}/${ep._anilistId}/${ep.number}/${language}`;
 }
 
-// ── Fetch Stream Sources ─────────────────────────────────
-/**
- * Fetch video streaming sources for an episode via Anify.
- * @param {string} episodeId  - episode ID from our episode list
- * @param {string} provider   - always 'anify' now (kept for compat)
- * @param {object} epObj      - the full episode object (has _anilistId, _providerId)
- * @returns {{ sources: [], headers: {}, subtitles: [] }}
- */
+// ── fetchStreamSources (kept for player.js compatibility) ─
+// Returns a special embed source instead of raw HLS links.
 async function fetchStreamSources(episodeId, provider, epObj = {}) {
-  const anilistId  = epObj._anilistId;
-  const providerId = epObj._providerId || 'zoro';
-
-  // Extract episode number from synthetic IDs like "12345-episode-3"
-  const epNumMatch = String(episodeId).match(/episode-(\d+)/i);
-  const episodeNum = epNumMatch ? epNumMatch[1] : null;
-
-  // Build Anify watch URL
-  // Format: /watch/{anilistId}/{providerId}/{watchId}?subType=sub
-  let watchId = episodeId;
-
-  // If it's a synthetic ani.zip ID, we need to find the real Anify episode ID
-  if (epNumMatch && anilistId) {
-    try {
-      const anifyEps = await fetchEpisodesAnify(anilistId);
-      const match = anifyEps.find(e => String(e.number) === String(episodeNum));
-      if (match) {
-        watchId = match.id;
-        epObj._providerId = match._providerId || 'zoro';
-      }
-    } catch(e) {
-      console.warn('Could not resolve real episode ID from Anify:', e.message);
-    }
-  }
-
-  const finalProvider = epObj._providerId || providerId;
-  const url = `${ANIFY_BASE}/watch/${anilistId}/${finalProvider}/${encodeURIComponent(watchId)}?subType=sub`;
-
-  const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
-  if (!res.ok) throw new Error(`Anify watch HTTP ${res.status}`);
-  const json = await res.json();
-
-  const sources = (json.sources || []).map(s => ({
-    url:     s.url,
-    quality: s.quality || 'default',
-    isM3U8:  s.isM3U8 !== undefined ? s.isM3U8 : (s.url || '').includes('.m3u8')
-  }));
-
+  if (!epObj._anilistId) throw new Error('Missing _anilistId on episode object');
+  const embedUrl = getMegaplayEmbedUrl(epObj, 'sub');
   return {
-    sources,
-    headers:   json.headers   || {},
-    subtitles: json.subtitles || []
+    sources: [{ url: embedUrl, quality: 'embed', isM3U8: false, isEmbed: true }],
+    headers: {},
+    subtitles: []
   };
 }
 
-// ── Search UI helper (shared across pages) ───────────────
+// ── Search UI helper ─────────────────────────────────────
 function renderSearchResults(results, box) {
   if (!results.length) {
     box.innerHTML = '<div class="search-item" style="color:#888">No results found.</div>';
